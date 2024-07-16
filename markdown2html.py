@@ -1,43 +1,199 @@
 #!/usr/bin/python3
-'''
-A script that codes markdown to HTML
-'''
-import sys
+"""
+Receives two string arguments
+"""
+import hashlib
 import os
-import re
+import sys
 
-if __name__ == '__main__':
 
-    # Test that the number of arguments passed is 2
-    if len(sys.argv[1:]) != 2:
-        print('Usage: ./markdown2html.py README.md README.html',
-              file=sys.stderr)
-        sys.exit(1)
+def bold_emphasis(line, markdown):
+    """
+    Transforms text to bold or emphasis based on specified string
 
-    # Store the arguments into variables
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
+    Args:
+        line (string): Text string to convert to bold or emphasis
+        markdown (string): Can be '**' for bold or '__' for emphasis
 
-    # Checks that the markdown file exists and is a file
-    if not (os.path.exists(input_file) and os.path.isfile(input_file)):
-        print(f'Missing {input_file}', file=sys.stderr)
-        sys.exit(1)
+    Return: Modified text
+    """
+    parts = line.split(markdown)
+    tag = 'b' if markdown == '**' else 'em'
 
-    with open(input_file, encoding='utf-8') as file_1:
-        html_content = []
-        md_content = [line[:-1] for line in file_1.readlines()]
-        for line in md_content:
-            heading = re.split(r'#{1,6} ', line)
-            if len(heading) > 1:
-                # Compute the number of the # present to
-                # determine heading level
-                h_level = len(line[:line.find(heading[1])-1])
-                # Append the html equivalent of the heading
-                html_content.append(
-                    f'<h{h_level}>{heading[1]}</h{h_level}>\n'
-                )
-            else:
-                html_content.append(line)
+    for index in range(1, len(parts), 2):
+        parts[index] = f'<{tag}>{parts[index]}</{tag}>'
 
-    with open(output_file, 'w', encoding='utf-8') as file_2:
-        file_2.writelines(html_content)
+    modified_line = ''.join(parts)
+
+    return modified_line
+
+
+def text_to_md5(text):
+    """
+    Converts text within '[[' and ']]' to md5
+
+    Args:
+        text (string): Text to convert
+
+    Return:
+        Converted text
+    """
+    if '[[' in text and ']]' in text:
+        opening = text.find('[[')
+        closing = text.find(']]')
+        to_md5 = text[opening + 2:closing]
+
+        hash_text = hashlib.md5(to_md5.encode()).hexdigest()
+        merged_text = f'{text[:opening]}{hash_text}{text[closing + 2 :]}'
+
+        return merged_text
+    else:
+        return text
+
+
+def remove_c(text):
+    """
+    Removes 'C' and 'c' from text wrapped in '((' and '))'
+
+    Args:
+        text (string): Text to transform
+
+    Return:
+        De-c-sed text
+    """
+    if '((' in text and '))' in text:
+        opening = text.find('((')
+        closing = text.find('))')
+
+        to_replace = text[opening + 2:closing]
+        replaced = to_replace.replace('C', '').replace('c', '')
+        merged_text = f'{text[:opening]}{replaced}{text[closing + 2:]}'
+
+        return merged_text
+    else:
+        return text
+
+
+def process_line(line):
+    """
+    Processes string based on markdown
+
+    Args:
+        line (string): Text to process
+
+    Return: Processed text
+    """
+    bold_text = bold_emphasis(line, '**')
+    em_text = bold_emphasis(bold_text, '__')
+    hash_text = text_to_md5(em_text)
+    no_c_text = remove_c(hash_text)
+
+    return no_c_text
+
+
+if __name__ == "__main__":
+
+    args = sys.argv[1:]
+
+    if len(args) < 2:
+        err = "Usage: ./markdown2html.py README.md README.html"
+        print(err, file=sys.stderr)
+        exit(1)
+
+    markdown_file = args[0]
+    html_file = args[1]
+
+    if not os.path.isfile(markdown_file):
+        print(f"Missing {markdown_file}", file=sys.stderr)
+        exit(1)
+
+    with open(markdown_file) as mdfile:
+        with open(html_file, 'a') as htmlfile:
+            # Flag to track opening and closing of list items
+            list_started = False
+
+            # Flag to track opening and closing of paragraph
+            paragraph_started = False
+
+            # Holds either <ol> or <ul>
+            list_type = ''
+
+            for line in mdfile:
+                # Heading section
+                if line.startswith('#'):
+                    # If there is an open list, close it first
+                    if list_started:
+                        htmlfile.write(f'</{list_type}>\n')
+                        list_started = False
+
+                    # If there is an open paragraph, close it first
+                    if paragraph_started:
+                        htmlfile.write('</p>\n')
+                        paragraph_started = False
+
+                    line = line.strip()
+                    count = 0
+
+                    while count < len(line) and line[count] == '#':
+                        count += 1
+
+                    if line[count] == ' ':
+                        text = line[count + 1:]
+                        head_text = process_line(text)
+
+                        htmlfile.write(f'<h{count}>{head_text}</h{count}>\n')
+
+                # Listing section
+                elif line.startswith('- ') or line.startswith('* '):
+                    # If there is an open paragraph, close it first
+                    if paragraph_started:
+                        htmlfile.write('</p>\n')
+                        paragraph_started = False
+
+                    line = line.strip()
+
+                    if line.startswith('- '):
+                        list_type = 'ul'
+                    elif line.startswith('* '):
+                        list_type = 'ol'
+
+                    text = line[2:]
+
+                    if not list_started:
+                        htmlfile.write(f'<{list_type}>\n')
+                        list_started = True
+
+                    list_text = process_line(text)
+
+                    htmlfile.write(f'<li>{list_text}</li>\n')
+
+                # Paragraph section
+                elif (line and line[0].isalpha()) or line.isspace()\
+                    or line.startswith('**') or line.startswith('__')\
+                    or line.startswith('((') or line.startswith('[['):
+                    # If there is an open list, close it first
+                    if list_started:
+                        htmlfile.write(f'</{list_type}>\n')
+                        list_started = False
+
+                    if not paragraph_started:
+                        if not line.isspace():
+                            paragraph_started = True
+                            htmlfile.write('<p>\n')
+                    elif paragraph_started:
+                        if line.isspace():
+                            htmlfile.write('\n</p>\n')
+                            paragraph_started = False
+                        else:
+                            htmlfile.write('\n<br/>\n')
+
+                    line = line.strip()
+                    paragraph_text = process_line(line)
+
+                    htmlfile.write(paragraph_text)
+
+            if list_started:
+                htmlfile.write(f'</{list_type}>\n')
+
+            if paragraph_started:
+                htmlfile.write('\n</p>\n')
